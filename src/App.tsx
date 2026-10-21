@@ -93,6 +93,37 @@ function App() {
   const pageCenterX = (contentBounds.minX + contentBounds.maxX) / 2;
   const pageCenterY = (contentBounds.minY + contentBounds.maxY) / 2;
 
+  // The viewport's own real pixel box - driven purely by CSS (vw/vh, see
+  // .canvas-viewport), independent of the canvas's own size, so there's no
+  // circularity in using it to size the canvas. Reuses the scrollMetrics
+  // measurement already kept in sync (scroll/resize/zoom listeners below)
+  // rather than tracking a second copy of the same live DOM read.
+  const viewportWidth = scrollMetrics.clientWidth;
+  const viewportHeight = scrollMetrics.clientHeight;
+
+  // "Fit to viewport" baseline, like an image viewer's Fit-to-Window: the
+  // largest scale at which the whole page still fits inside the viewport's
+  // real box without being cropped in either dimension - so a sketch fills
+  // more of a large window and shrinks to stay fully visible on a small
+  // one, with no scrolling needed at this baseline. Clamped to a sane
+  // range as a guard against a degenerate viewport measurement.
+  const rawAutoFitScale = Math.min(viewportWidth / pageWidth, viewportHeight / pageHeight);
+  const autoFitScale = Math.min(Math.max(rawAutoFitScale, 0.25), 3);
+
+  // The manual zoom buttons/voice commands (zoom state, ZOOM_MIN..ZOOM_MAX)
+  // now adjust FURTHER from this auto-fit baseline rather than from the
+  // page's raw pixel size - effectiveZoom is what's actually applied to
+  // the drawing.
+  const effectiveZoom = autoFitScale * zoom;
+  // The buffer only grows past the auto-fit baseline when zooming IN
+  // further than it; zooming OUT never shrinks the buffer below the
+  // baseline itself - the same "canvas doesn't shrink on zoom-out"
+  // principle as before, now anchored to the auto-fit view instead of the
+  // page's raw pixel size.
+  const bufferZoom = autoFitScale * Math.max(zoom, 1);
+  const bufferWidth = pageWidth * bufferZoom;
+  const bufferHeight = pageHeight * bufferZoom;
+
   const drawShapes = React.useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -104,17 +135,19 @@ function App() {
 
     ctx.save();
     // Scale around the page's own center (pageCenterX/Y) rather than the
-    // buffer's top-left corner. With no overflow this is exactly the same
-    // as scaling from the canvas's geometric center; it's what makes
-    // zoom-out shrink shapes toward the middle instead of one corner, and
-    // it falls out of the SAME formula for zoom-in's origin-anchored
-    // growth (verified by hand: pixel = bufferCenter + zoom*(P -
-    // pageCenter), which reduces to a plain scale(zoom) from the origin
-    // whenever pageCenter sits at bufferWidth/(2*zoom), bufferHeight/(2*zoom) -
-    // true for zoom >= 1 with no overflow, since the buffer then grows
-    // exactly in step with zoom). No separate zoom<1/zoom>=1 branches needed.
+    // buffer's top-left corner, using effectiveZoom (auto-fit baseline x
+    // manual zoom) rather than the raw zoom state. With no overflow and
+    // autoFitScale=1 this is exactly the same as scaling from the canvas's
+    // geometric center; it's what makes zoom-out shrink shapes toward the
+    // middle instead of one corner, and it falls out of the SAME formula
+    // for zoom-in's origin-anchored growth (verified by hand: pixel =
+    // bufferCenter + effectiveZoom*(P - pageCenter), which reduces to a
+    // plain scale from the origin whenever pageCenter sits at
+    // bufferWidth/(2*effectiveZoom), bufferHeight/(2*effectiveZoom) - true
+    // whenever the buffer is grown exactly in step with effectiveZoom). No
+    // separate zoom<1/zoom>=1 branches needed.
     ctx.translate(canvas.width / 2, canvas.height / 2);
-    ctx.scale(zoom, zoom);
+    ctx.scale(effectiveZoom, effectiveZoom);
     ctx.translate(-pageCenterX, -pageCenterY);
 
     ctx.lineWidth = 2;
@@ -357,7 +390,7 @@ function App() {
     });
 
     ctx.restore();
-  }, [shapes, zoom, contentBounds]);
+  }, [shapes, effectiveZoom, pageCenterX, pageCenterY]);
 
   useLayoutEffect(() => {
     drawShapes();
@@ -456,11 +489,20 @@ function App() {
     };
   }, []);
 
-  // Re-measure whenever zoom changes the canvas buffer size (and so the
-  // viewport's scrollWidth/scrollHeight) - after layout has settled.
+  // Re-measure whenever the canvas's actual rendered size changes (and so
+  // the viewport's scrollWidth/scrollHeight) - after layout has settled.
+  // Keyed on bufferWidth/bufferHeight rather than zoom directly, since the
+  // buffer can also change size from autoFitScale settling (e.g. right
+  // after mount, before the real viewport box has been measured even
+  // once) or from the sketch's own content bounds growing - not just from
+  // a manual zoom change. This does feed back into scrollMetrics, which
+  // autoFitScale itself reads (via viewportWidth/viewportHeight) - but
+  // those only come from clientWidth/clientHeight, which this effect
+  // doesn't change (only scrollWidth/scrollHeight do), so it settles
+  // within a couple of render passes rather than looping.
   useLayoutEffect(() => {
     measureScroll();
-  }, [zoom]);
+  }, [bufferWidth, bufferHeight]);
 
   const handleClear = () => {
     setShapes([]);
@@ -511,16 +553,6 @@ function App() {
   };
 
   const statusClass = errorMsg ? 'error' : isListening ? 'recording' : isProcessing ? 'processing' : '';
-  // The canvas buffer only grows past the page's own size when zoomed IN
-  // (so enlarged content has room to render crisply and overflow into the
-  // scrollable viewport). Zooming OUT never shrinks the buffer - content
-  // just shrinks within the same fixed-size page, leaving blank margin,
-  // rather than shrinking the page itself. The page itself is pageWidth x
-  // pageHeight, not always CANVAS_WIDTH x CANVAS_HEIGHT - see
-  // computeContentBounds.
-  const bufferZoom = Math.max(zoom, 1);
-  const bufferWidth = pageWidth * bufferZoom;
-  const bufferHeight = pageHeight * bufferZoom;
   const hScrollable = scrollMetrics.scrollWidth > scrollMetrics.clientWidth;
   const vScrollable = scrollMetrics.scrollHeight > scrollMetrics.clientHeight;
   const hThumbWidthPct = (scrollMetrics.clientWidth / scrollMetrics.scrollWidth) * 100;

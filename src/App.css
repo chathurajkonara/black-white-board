@@ -241,16 +241,16 @@
 }
 
 .canvas-viewport {
-  /* Shrink-wraps to the canvas's actual size (800x600 on a normal sketch -
-     no visual change there) but caps out responsively against the real
-     browser window instead of a fixed 800x600, so a sketch that's grown
-     past the nominal page (see computeContentBounds) - or that's been
-     zoomed in - gets more room on a larger window before scrolling is
-     needed, instead of always being boxed into the old fixed size. */
-  width: fit-content;
-  max-width: min(92vw, 1200px);
-  height: fit-content;
-  max-height: min(75vh, 900px);
+  /* A real, CSS-only box size (not derived from the canvas's own size -
+     App.tsx reads this via scrollMetrics.clientWidth/Height to compute
+     autoFitScale, so the canvas can be sized TO MATCH it; sizing this box
+     from the canvas's content instead would be circular). A sketch is
+     auto-scaled to fill this box (see autoFitScale in App.tsx), so it
+     fills more of a large window and shrinks to stay fully visible on a
+     small one - capped so an ultrawide/4K monitor doesn't blow it up
+     absurdly, or a tiny window shrink it to nothing. */
+  width: min(92vw, 1200px);
+  height: min(75vh, 900px);
   overflow: auto;
   border-radius: var(--radius-md);
   /* The native scrollbar is hidden in favor of the always-visible custom
