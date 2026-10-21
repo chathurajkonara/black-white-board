@@ -8,3 +8,11 @@ export const CANVAS_HEIGHT = 600;
 // aspect ratio.
 export const AI_WIDTH = 1000;
 export const AI_HEIGHT = Math.round(AI_WIDTH * (CANVAS_HEIGHT / CANVAS_WIDTH));
+
+export const ZOOM_MIN = 0.5;
+export const ZOOM_MAX = 2.5;
+export const ZOOM_STEP = 0.25;
+
+// Pixels scrolled per "scroll up/down/left/right" voice command, in the
+// canvas viewport's own (already-zoomed) pixel space.
+export const PAN_STEP = 120;

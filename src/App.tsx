@@ -1,21 +1,60 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useLayoutEffect, useEffect, useState } from 'react';
 import './App.css';
 import useVoiceRecognition from './hooks/useVoiceRecognition';
 import { parseCommand } from './services/nlpService';
-import { generateShapesFromAI, shapesToAIContext } from './services/geometryService';
+import { generateShapesFromAI, shapesToAIContext, computeContentBounds } from './services/geometryService';
 import type { Shape } from './services/geometryService';
 import type { Point } from './services/nlpService';
-import { MicIcon, StopIcon, TrashIcon, UndoIcon, AlertIcon } from './components/Icons';
+import { MicIcon, StopIcon, TrashIcon, UndoIcon, AlertIcon, ZoomInIcon, ZoomOutIcon } from './components/Icons';
 import { findClearLabelSpot } from './services/labelPlacement';
 import type { Segment, Arc, LabelBox } from './services/labelPlacement';
-import { CANVAS_WIDTH, CANVAS_HEIGHT, AI_WIDTH } from './constants';
+import { CANVAS_WIDTH, CANVAS_HEIGHT, AI_WIDTH, ZOOM_MIN, ZOOM_MAX, ZOOM_STEP, PAN_STEP } from './constants';
+
+// Recognizes a small, fixed set of zoom phrases locally so they're handled
+// instantly, for free, without a round trip to the AI - the drawing model's
+// schema only ever describes shapes, so it has no way to express "zoom"
+// even if asked. Checked before a spoken command is sent off to parseCommand;
+// anything that doesn't match falls through to the AI as a normal drawing
+// command, same as today.
+const matchZoomCommand = (text: string): 'in' | 'out' | 'reset' | null => {
+  const normalized = text.trim().toLowerCase();
+  if (/\bzoom\s*in\b/.test(normalized)) return 'in';
+  if (/\bzoom\s*out\b/.test(normalized)) return 'out';
+  if (/\b(reset\s*(the\s*)?zoom|zoom\s*(to\s*)?100\s*%?|actual\s*size)\b/.test(normalized)) return 'reset';
+  return null;
+};
+
+// Same idea as matchZoomCommand - a small fixed set of pan phrases, checked
+// locally before anything is sent to the AI. "scroll"/"pan" are both
+// accepted since either reads naturally ("scroll left", "pan left").
+const matchScrollCommand = (text: string): 'up' | 'down' | 'left' | 'right' | null => {
+  const normalized = text.trim().toLowerCase();
+  if (!/\b(scroll|pan)\b/.test(normalized)) return null;
+  if (/\bup\b/.test(normalized)) return 'up';
+  if (/\bdown\b/.test(normalized)) return 'down';
+  if (/\bleft\b/.test(normalized)) return 'left';
+  if (/\bright\b/.test(normalized)) return 'right';
+  return null;
+};
 
 function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
   const { text, commandQueue, isListening, startListening, stopListening, dequeueCommand } = useVoiceRecognition();
   const [shapes, setShapes] = useState<Shape[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(1);
+  // Mirrors the viewport's own scroll metrics so the custom scrollbar below
+  // can render a thumb without relying on the browser's native scrollbar,
+  // which some platforms (notably macOS) keep invisible until the user is
+  // actively scrolling - giving no visual cue that a zoomed-in sketch
+  // extends past the canvas at all.
+  const [scrollMetrics, setScrollMetrics] = useState({
+    scrollLeft: 0, scrollTop: 0,
+    scrollWidth: CANVAS_WIDTH, scrollHeight: CANVAS_HEIGHT,
+    clientWidth: CANVAS_WIDTH, clientHeight: CANVAS_HEIGHT,
+  });
 
   // Named vertices (e.g. "A", "B") derived from whatever is currently on the
   // board, in the AI's 0-1000 coordinate space. Deriving this from `shapes`
@@ -40,6 +79,20 @@ function App() {
     return registry;
   }, [shapes]);
 
+  // The "page" a sketch actually occupies - normally just the nominal
+  // CANVAS_WIDTH x CANVAS_HEIGHT box, but auto-extended to cover any shape
+  // that's drifted or poked past it (see computeContentBounds), so there's
+  // always somewhere for the canvas buffer/scrollbar to reach it rather
+  // than silently clipping it.
+  const contentBounds = React.useMemo(
+    () => computeContentBounds(shapes, CANVAS_WIDTH, CANVAS_HEIGHT),
+    [shapes]
+  );
+  const pageWidth = contentBounds.maxX - contentBounds.minX;
+  const pageHeight = contentBounds.maxY - contentBounds.minY;
+  const pageCenterX = (contentBounds.minX + contentBounds.maxX) / 2;
+  const pageCenterY = (contentBounds.minY + contentBounds.maxY) / 2;
+
   const drawShapes = React.useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -48,6 +101,21 @@ function App() {
 
     ctx.fillStyle = 'white';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.save();
+    // Scale around the page's own center (pageCenterX/Y) rather than the
+    // buffer's top-left corner. With no overflow this is exactly the same
+    // as scaling from the canvas's geometric center; it's what makes
+    // zoom-out shrink shapes toward the middle instead of one corner, and
+    // it falls out of the SAME formula for zoom-in's origin-anchored
+    // growth (verified by hand: pixel = bufferCenter + zoom*(P -
+    // pageCenter), which reduces to a plain scale(zoom) from the origin
+    // whenever pageCenter sits at bufferWidth/(2*zoom), bufferHeight/(2*zoom) -
+    // true for zoom >= 1 with no overflow, since the buffer then grows
+    // exactly in step with zoom). No separate zoom<1/zoom>=1 branches needed.
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.scale(zoom, zoom);
+    ctx.translate(-pageCenterX, -pageCenterY);
 
     ctx.lineWidth = 2;
 
@@ -287,9 +355,11 @@ function App() {
         }
       }
     });
-  }, [shapes]);
 
-  useEffect(() => {
+    ctx.restore();
+  }, [shapes, zoom, contentBounds]);
+
+  useLayoutEffect(() => {
     drawShapes();
   }, [drawShapes]);
 
@@ -303,6 +373,23 @@ function App() {
 
       const currentText = commandQueue[0];
       dequeueCommand();
+
+      const zoomAction = matchZoomCommand(currentText);
+      if (zoomAction) {
+        console.log("Local zoom command:", zoomAction, currentText);
+        if (zoomAction === 'in') handleZoomIn();
+        else if (zoomAction === 'out') handleZoomOut();
+        else handleZoomReset();
+        return;
+      }
+
+      const scrollAction = matchScrollCommand(currentText);
+      if (scrollAction) {
+        console.log("Local scroll command:", scrollAction, currentText);
+        handleScroll(scrollAction);
+        return;
+      }
+
       setIsProcessing(true);
       setErrorMsg(null);
 
@@ -314,7 +401,7 @@ function App() {
         if (commandResult && commandResult.shapes) {
           const canvas = canvasRef.current;
           if (canvas) {
-            const newShapes = generateShapesFromAI(commandResult, canvas.width);
+            const newShapes = generateShapesFromAI(commandResult, CANVAS_WIDTH);
             setShapes(prevShapes => [...prevShapes, ...newShapes]);
           }
         }
@@ -340,6 +427,41 @@ function App() {
     }
   }, [errorMsg]);
 
+  const measureScroll = () => {
+    const vp = viewportRef.current;
+    if (!vp) return;
+    setScrollMetrics({
+      scrollLeft: vp.scrollLeft, scrollTop: vp.scrollTop,
+      scrollWidth: vp.scrollWidth, scrollHeight: vp.scrollHeight,
+      clientWidth: vp.clientWidth, clientHeight: vp.clientHeight,
+    });
+  };
+
+  // Keeps the custom scrollbar thumb in sync with the viewport's real
+  // scroll position, however it was scrolled - wheel, trackpad, keyboard,
+  // our own handleScroll, or dragging the thumb itself (which sets
+  // viewport.scrollLeft/Top directly, firing this same 'scroll' event).
+  // Also re-measures on a window resize, since the viewport's own box size
+  // is now responsive (CSS fit-content capped by vw/vh) rather than fixed -
+  // its clientWidth/clientHeight can change without zoom or scroll
+  // changing at all.
+  useEffect(() => {
+    const vp = viewportRef.current;
+    if (!vp) return;
+    vp.addEventListener('scroll', measureScroll);
+    window.addEventListener('resize', measureScroll);
+    return () => {
+      vp.removeEventListener('scroll', measureScroll);
+      window.removeEventListener('resize', measureScroll);
+    };
+  }, []);
+
+  // Re-measure whenever zoom changes the canvas buffer size (and so the
+  // viewport's scrollWidth/scrollHeight) - after layout has settled.
+  useLayoutEffect(() => {
+    measureScroll();
+  }, [zoom]);
+
   const handleClear = () => {
     setShapes([]);
   };
@@ -348,7 +470,63 @@ function App() {
     setShapes(prevShapes => prevShapes.slice(0, -1));
   };
 
+  const handleZoomIn = () => setZoom(z => Math.min(ZOOM_MAX, z + ZOOM_STEP));
+  const handleZoomOut = () => setZoom(z => Math.max(ZOOM_MIN, z - ZOOM_STEP));
+  const handleZoomReset = () => setZoom(1);
+
+  const handleScroll = (direction: 'up' | 'down' | 'left' | 'right') => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const dx = direction === 'left' ? -PAN_STEP : direction === 'right' ? PAN_STEP : 0;
+    const dy = direction === 'up' ? -PAN_STEP : direction === 'down' ? PAN_STEP : 0;
+    viewport.scrollBy({ top: dy, left: dx, behavior: 'smooth' });
+  };
+
+  // Dragging the custom scrollbar thumb - converts a pointer-movement delta
+  // into a scroll delta via the same ratio a native scrollbar thumb moves
+  // at (track size / content size), then sets scrollLeft/scrollTop directly
+  // (which fires the native 'scroll' event, so measureScroll picks it up
+  // and the thumb's rendered position updates to match).
+  const handleThumbDrag = (axis: 'x' | 'y') => (e: React.PointerEvent) => {
+    e.preventDefault();
+    const vp = viewportRef.current;
+    if (!vp) return;
+    const startPos = axis === 'x' ? e.clientX : e.clientY;
+    const startScroll = axis === 'x' ? vp.scrollLeft : vp.scrollTop;
+    const trackSize = axis === 'x' ? vp.clientWidth : vp.clientHeight;
+    const scrollSize = axis === 'x' ? vp.scrollWidth : vp.scrollHeight;
+
+    const onMove = (moveEvent: PointerEvent) => {
+      const currentPos = axis === 'x' ? moveEvent.clientX : moveEvent.clientY;
+      const scrollDelta = (currentPos - startPos) * (scrollSize / trackSize);
+      if (axis === 'x') vp.scrollLeft = startScroll + scrollDelta;
+      else vp.scrollTop = startScroll + scrollDelta;
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
   const statusClass = errorMsg ? 'error' : isListening ? 'recording' : isProcessing ? 'processing' : '';
+  // The canvas buffer only grows past the page's own size when zoomed IN
+  // (so enlarged content has room to render crisply and overflow into the
+  // scrollable viewport). Zooming OUT never shrinks the buffer - content
+  // just shrinks within the same fixed-size page, leaving blank margin,
+  // rather than shrinking the page itself. The page itself is pageWidth x
+  // pageHeight, not always CANVAS_WIDTH x CANVAS_HEIGHT - see
+  // computeContentBounds.
+  const bufferZoom = Math.max(zoom, 1);
+  const bufferWidth = pageWidth * bufferZoom;
+  const bufferHeight = pageHeight * bufferZoom;
+  const hScrollable = scrollMetrics.scrollWidth > scrollMetrics.clientWidth;
+  const vScrollable = scrollMetrics.scrollHeight > scrollMetrics.clientHeight;
+  const hThumbWidthPct = (scrollMetrics.clientWidth / scrollMetrics.scrollWidth) * 100;
+  const hThumbLeftPct = (scrollMetrics.scrollLeft / scrollMetrics.scrollWidth) * 100;
+  const vThumbHeightPct = (scrollMetrics.clientHeight / scrollMetrics.scrollHeight) * 100;
+  const vThumbTopPct = (scrollMetrics.scrollTop / scrollMetrics.scrollHeight) * 100;
 
   return (
     <div className="App">
@@ -369,6 +547,16 @@ function App() {
         </button>
         <button className="btn btn-ghost" onClick={handleUndo} disabled={shapes.length === 0}>
           <UndoIcon className="icon" /> Undo
+        </button>
+        <button className="btn btn-ghost" onClick={handleZoomOut} disabled={zoom <= ZOOM_MIN}>
+          <ZoomOutIcon className="icon" /> Zoom Out
+        </button>
+        <span className="zoom-level">{Math.round(zoom * 100)}%</span>
+        <button className="btn btn-ghost" onClick={handleZoomIn} disabled={zoom >= ZOOM_MAX}>
+          <ZoomInIcon className="icon" /> Zoom In
+        </button>
+        <button className="btn btn-ghost" onClick={handleZoomReset} disabled={zoom === 1}>
+          Reset Zoom
         </button>
       </div>
 
@@ -401,12 +589,34 @@ function App() {
       )}
 
       <div className={`canvas-card ${isProcessing ? 'is-busy' : ''}`}>
-        <canvas
-          ref={canvasRef}
-          width={CANVAS_WIDTH}
-          height={CANVAS_HEIGHT}
-          className="whiteboard"
-        ></canvas>
+        <div className="canvas-scroll-wrap">
+          <div className="canvas-viewport" ref={viewportRef}>
+            <canvas
+              ref={canvasRef}
+              width={bufferWidth}
+              height={bufferHeight}
+              className="whiteboard"
+            ></canvas>
+          </div>
+          {hScrollable && (
+            <div className="custom-scrollbar-track horizontal">
+              <div
+                className="custom-scrollbar-thumb"
+                style={{ width: `${hThumbWidthPct}%`, left: `${hThumbLeftPct}%` }}
+                onPointerDown={handleThumbDrag('x')}
+              />
+            </div>
+          )}
+          {vScrollable && (
+            <div className="custom-scrollbar-track vertical">
+              <div
+                className="custom-scrollbar-thumb"
+                style={{ height: `${vThumbHeightPct}%`, top: `${vThumbTopPct}%` }}
+                onPointerDown={handleThumbDrag('y')}
+              />
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="transcript">

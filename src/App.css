@@ -151,6 +151,16 @@
   border-color: var(--color-danger-border);
 }
 
+.zoom-level {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 42px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
 .queue-count {
   padding: 1px 6px;
   font-size: 11px;
@@ -224,10 +234,82 @@
   box-shadow: var(--shadow-lg), 0 0 0 3px var(--color-accent-border);
 }
 
+.canvas-scroll-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+
+.canvas-viewport {
+  /* Shrink-wraps to the canvas's actual size (800x600 on a normal sketch -
+     no visual change there) but caps out responsively against the real
+     browser window instead of a fixed 800x600, so a sketch that's grown
+     past the nominal page (see computeContentBounds) - or that's been
+     zoomed in - gets more room on a larger window before scrolling is
+     needed, instead of always being boxed into the old fixed size. */
+  width: fit-content;
+  max-width: min(92vw, 1200px);
+  height: fit-content;
+  max-height: min(75vh, 900px);
+  overflow: auto;
+  border-radius: var(--radius-md);
+  /* The native scrollbar is hidden in favor of the always-visible custom
+     one below (.custom-scrollbar-track/.custom-scrollbar-thumb) - panning
+     itself stays fully native (wheel, trackpad, keyboard), but some
+     platforms (notably macOS) keep the OS scrollbar invisible until
+     actively scrolling, giving no cue a zoomed-in sketch extends past the
+     canvas at all. */
+  scrollbar-width: none;
+}
+
+.canvas-viewport::-webkit-scrollbar {
+  display: none;
+}
+
+.custom-scrollbar-track {
+  position: absolute;
+  background: var(--color-border);
+  border-radius: 6px;
+}
+
+.custom-scrollbar-track.horizontal {
+  left: 2px;
+  right: 14px;
+  bottom: 3px;
+  height: 10px;
+}
+
+.custom-scrollbar-track.vertical {
+  top: 2px;
+  bottom: 14px;
+  right: 3px;
+  width: 10px;
+}
+
+.custom-scrollbar-thumb {
+  position: absolute;
+  background: var(--color-text-muted);
+  border-radius: 6px;
+  cursor: grab;
+}
+
+.custom-scrollbar-track.horizontal .custom-scrollbar-thumb {
+  top: 0;
+  height: 100%;
+}
+
+.custom-scrollbar-track.vertical .custom-scrollbar-thumb {
+  left: 0;
+  width: 100%;
+}
+
+.custom-scrollbar-thumb:hover,
+.custom-scrollbar-thumb:active {
+  background: var(--color-accent);
+}
+
 .whiteboard {
   display: block;
-  max-width: 100%;
-  height: auto;
   background-color: #fff;
   border-radius: var(--radius-md);
 }
