@@ -1,16 +1,24 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
-import { AI_HEIGHT } from "../constants";
+import { AI_HEIGHT, API_KEY_STORAGE_KEY } from "../constants";
 
-const API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY;
+// The key is entered by each user via the Settings modal and kept only in
+// their own browser's localStorage - never baked into the build, so the
+// public bundle never embeds anyone's secret.
+export const getApiKey = (): string | null => localStorage.getItem(API_KEY_STORAGE_KEY);
+export const hasApiKey = (): boolean => !!getApiKey()?.trim();
+export const setApiKey = (key: string): void => localStorage.setItem(API_KEY_STORAGE_KEY, key.trim());
+export const clearApiKey = (): void => localStorage.removeItem(API_KEY_STORAGE_KEY);
 
-const client = new Anthropic({
-  apiKey: API_KEY || "",
-  // This app calls the Anthropic API directly from the browser, same as the
-  // previous Gemini integration did - the key is exposed to anyone using the app.
-  dangerouslyAllowBrowser: true,
-});
+// Thrown by parseCommand when no key is configured yet, so the caller can
+// point the user at Settings instead of showing a generic API-error message.
+export class MissingApiKeyError extends Error {
+  constructor() {
+    super("No Anthropic API key configured.");
+    this.name = "MissingApiKeyError";
+  }
+}
 
 const MODEL = "claude-opus-5";
 
@@ -179,7 +187,18 @@ export const parseCommand = async (
   currentShapes: ExistingShapeContext[],
   namedPoints: Record<string, Point> = {},
 ): Promise<ParsedCommand | null> => {
-  if (!API_KEY || !command.trim()) return null;
+  if (!command.trim()) return null;
+
+  const apiKey = getApiKey();
+  if (!apiKey) throw new MissingApiKeyError();
+
+  const client = new Anthropic({
+    apiKey,
+    // This app calls the Anthropic API directly from the browser - there's
+    // no backend. Each user supplies their own key via Settings, so it's
+    // their own key exposed to their own client, not a shared secret.
+    dangerouslyAllowBrowser: true,
+  });
 
   const context = currentShapes.length > 0
       ? `Current Board State: ${JSON.stringify(currentShapes)}`

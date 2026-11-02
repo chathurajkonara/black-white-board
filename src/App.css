@@ -170,6 +170,82 @@
   border-radius: var(--radius-pill);
 }
 
+.key-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.key-dot-set {
+  background: var(--color-accent);
+}
+
+.key-dot-unset {
+  background: var(--color-text-muted);
+  opacity: 0.5;
+}
+
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.settings-modal {
+  width: min(420px, 90vw);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 24px;
+}
+
+.settings-modal h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.settings-modal .hint {
+  margin: 0 0 16px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.settings-modal .input-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.settings-modal .actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.text-input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 14px;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  transition: border-color 0.15s ease;
+}
+
+.text-input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
 /* Small rotating-ring loader for the "AI is drawing..." state */
 .spinner {
   width: 14px;

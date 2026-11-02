@@ -16,3 +16,7 @@ export const ZOOM_STEP = 0.25;
 // Pixels scrolled per "scroll up/down/left/right" voice command, in the
 // canvas viewport's own (already-zoomed) pixel space.
 export const PAN_STEP = 120;
+
+// localStorage key for the user's own Anthropic API key - entered via the
+// Settings modal, never baked into the build.
+export const API_KEY_STORAGE_KEY = "bwb_anthropic_api_key";

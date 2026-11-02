@@ -1,11 +1,12 @@
 import React, { useRef, useLayoutEffect, useEffect, useState } from 'react';
 import './App.css';
 import useVoiceRecognition from './hooks/useVoiceRecognition';
-import { parseCommand } from './services/nlpService';
+import { parseCommand, hasApiKey, MissingApiKeyError } from './services/nlpService';
 import { generateShapesFromAI, shapesToAIContext, computeContentBounds } from './services/geometryService';
 import type { Shape } from './services/geometryService';
 import type { Point } from './services/nlpService';
-import { MicIcon, StopIcon, TrashIcon, UndoIcon, AlertIcon, ZoomInIcon, ZoomOutIcon } from './components/Icons';
+import { MicIcon, StopIcon, TrashIcon, UndoIcon, AlertIcon, ZoomInIcon, ZoomOutIcon, SettingsIcon } from './components/Icons';
+import SettingsModal from './components/SettingsModal';
 import { findClearLabelSpot } from './services/labelPlacement';
 import type { Segment, Arc, LabelBox } from './services/labelPlacement';
 import { CANVAS_WIDTH, CANVAS_HEIGHT, AI_WIDTH, ZOOM_MIN, ZOOM_MAX, ZOOM_STEP, PAN_STEP } from './constants';
@@ -45,6 +46,8 @@ function App() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [keyPresent, setKeyPresent] = useState(() => hasApiKey());
   // Mirrors the viewport's own scroll metrics so the custom scrollbar below
   // can render a thumb without relying on the browser's native scrollbar,
   // which some platforms (notably macOS) keep invisible until the user is
@@ -440,7 +443,9 @@ function App() {
         }
       } catch (err: any) {
         console.error("Error in processCommand:", err);
-        if (err.message?.includes("429")) {
+        if (err instanceof MissingApiKeyError) {
+          setErrorMsg("No Anthropic API key set. Click Settings above to add your own key.");
+        } else if (err.message?.includes("429")) {
           setErrorMsg("Claude API Rate Limit Exceeded. Please wait 30-60 seconds before trying again.");
         } else {
           setErrorMsg("An error occurred while communicating with the AI.");
@@ -590,7 +595,17 @@ function App() {
         <button className="btn btn-ghost" onClick={handleZoomReset} disabled={zoom === 1}>
           Reset Zoom
         </button>
+        <button className="btn btn-ghost" onClick={() => setIsSettingsOpen(true)}>
+          <SettingsIcon className="icon" /> Settings
+          <span className={`key-dot ${keyPresent ? 'key-dot-set' : 'key-dot-unset'}`} />
+        </button>
       </div>
+
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        onKeyChange={() => setKeyPresent(hasApiKey())}
+      />
 
       <div className={`status ${statusClass}`}>
         {errorMsg ? (
