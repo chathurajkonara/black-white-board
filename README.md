@@ -71,3 +71,23 @@ export default defineConfig([
   },
 ])
 ```
+
+## Deployment (AWS)
+
+The app is a static SPA hosted on a private S3 bucket behind CloudFront (see `infra/`, AWS CDK).
+Users supply their own Anthropic API key in Settings; it stays in their browser's `localStorage`
+and is never part of the build.
+
+One-time setup (needs AWS credentials):
+
+```sh
+cd infra && npm install
+npx cdk bootstrap
+npx cdk deploy -c budgetEmail=you@example.com   # budgetEmail is optional
+```
+
+Copy the stack outputs into GitHub repo **Variables**: `AWS_DEPLOY_ROLE_ARN` (DeployRoleArn),
+`SITE_BUCKET` (BucketName), `DISTRIBUTION_ID` (DistributionId), `AWS_REGION` (the region you deployed to, e.g. `ap-southeast-2`).
+The stack assumes the account already has the GitHub OIDC provider
+(`token.actions.githubusercontent.com`); if not, create it once in IAM first.
+After that, every push to `master` builds and deploys via `.github/workflows/deploy.yml`.
